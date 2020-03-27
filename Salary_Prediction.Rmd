@@ -1,0 +1,212 @@
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading necessary packages and check the loading
+```{r loadPackages, warning=FALSE, message=FALSE, results='hide' }
+
+if(!require("pacman")) install.packages("pacman")
+pacman::p_load(caret, data.table, MASS, ggplot2, scales, plyr, dplyr, randomForest, 
+               ISLR, leaps, GGally, caTools, forecast, tidyverse, leaps, gbm, rpart, 
+               rpart.plot, rattle, RColorBrewer)
+search()
+theme_set(theme_classic())
+
+```
+
+
+## 1) Remove the observations with unknown salary information. How many observations were removed in this process?
+```{r Question 1}
+
+data= Hitters
+hitters.df = setDF(data)
+# Displaying the NA values in the Salary variable of the Hitters data
+summary(hitters.df$Salary)
+# Removing all the NA values in all the variables of the Hitters data.
+newdata.df<- na.omit(hitters.df)
+Hitters.salary <- newdata.df$Salary
+summary(newdata.df$Salary)
+
+```
+
+1)**Explanation**: The Salary variable in the Hitters data had *59* NA values which were removed.
+
+
+## 2) Generate log-transform the salaries. Can you justify this transformation?
+```{r Question 2}
+
+# The log function generates the log-transform for the salary function
+newdata.df[,19] <- log(Hitters.salary)
+hist(Hitters.salary, breaks = 10, main = "Histogram of Salary")
+hist(newdata.df$Salary,breaks = 10,main = "Histogram of log of Salary")
+
+```
+
+2) **Explanation**: The first histogram depicts that the Salary data without the log transform function is right skewed which reveals that the mean of the values is greater than the median. Skewed data has a negative impact on linear regression hence we run the log transform on the Salary variable to make the data normally distributed and to improve the model.
+
+
+## 3) Create a scatterplot with Hits on the y-axis and Years on the x-axis using all the observations. Color code the observations using the log Salary variable. What patterns do you notice on this chart, if any?
+```{r Question 3}
+
+ggplot(newdata.df,aes(y=newdata.df$Hits, x=newdata.df$Years, color=(newdata.df$Salary)))+
+  geom_point()
+
+```
+
+3) **Explanation**: The Scatter plot depicts that the Salary of a player is dependent on the Number of Hits and the Number of years the player has played for. The dark blue geom points (depicting lower salary) are mostly clustered around lower years and a smaller number of hits. However, there are few points that do not follow that pattern and there might be some other factors explain that deviation.
+
+
+## 4) Run a linear regression model of Log Salary on all the predictors using the entire dataset. Use regsubsets() function to perform best subset selection from the regression model. Identify the best model using BIC. Which predictor variables are included in this (best) model?
+```{r Question 4}
+
+#Running Forward Search for Model Selection
+data_regfit <- regsubsets(newdata.df$Salary~.,data=newdata.df[,-c(14,15,20)],nvmax=19,method="forward")
+data_summary<- summary(data_regfit)
+print("Forward BIC Values")
+data_summary$bic
+
+
+# Running Backward Search for Model Selection
+data_regfit <- regsubsets(newdata.df$Salary~.,data=newdata.df[,-c(14,15,20)],nvmax=19,method="backward")
+data_summary<- summary(data_regfit)
+print("Backward BIC Values")
+data_summary$bic
+
+# Running Exhaustive Search for Model Selection
+data_regfit <- regsubsets(newdata.df$Salary~.,data=newdata.df[,-c(14,15,20)],nvmax=19,method="exhaustive")
+data_summary<- summary(data_regfit)
+names(data_summary)
+which.min(data_summary$bic)
+plot(data_summary$bic,xlab="Number of Variables",ylab="BIC",type="l")
+print("Exhaustive BIC Values")
+data_summary$bic
+data_summary$which
+
+```
+
+4) **Explanation**: On running Forward,Backward and Exhaustive Search we infer that the BIC value is least for Exhaustive search which is -159 with 3 predictors in consideration.The three predictors based on this model are Hits, Walks and Years.
+
+
+## 5) Now create a training data set consisting of 80 percent of the observations, and a test data set consisting of the remaining observations.
+```{r Question 5}
+
+set.seed(42)
+# Split the data with 80% as training and the rest in test data
+sample= sample.split(newdata.df$Salary, SplitRatio = 0.8)
+train.df= subset(newdata.df, sample == TRUE)
+test.df= subset(newdata.df,sample== FALSE)
+head(train.df)
+
+```
+
+5) **Explanation**: Training data set and test data set created.
+
+
+## 6) Generate a regression tree of log Salary using only Years and Hits variables from the training data set. Which players are likely to receive highest salaries according to this model? Write down the rule and elaborate on it.
+```{r Question 6}
+
+set.seed(42)
+# Generate the regression tree of log Salary using only Years and Hits
+reg_tree <- rpart(Salary ~ Years + Hits, data = train.df) 
+prp(reg_tree, type = 1, extra = 1, under = TRUE,split.font = 2, varlen = -10, box.palette = "BuOr")  
+rpart.rules(reg_tree, cover = TRUE)
+
+```
+
+6) **Explanation**: The players likely to receive the highest salary are the one's with 5 or more years of experience playing the game and have had 104 or more hits in their career.
+ 
+
+## 7) Now create a regression tree using all the variables in the training data set. Perform boosting on the training set with 1,000 trees for a range of values of the shrinkage parameter λ. Produce a plot with different shrinkage values on the x-axis and the corresponding training set MSE on the y-axis.
+```{r Question 7}
+
+lambdas<- seq(0.002, 0.01, by=0.001)
+train_error <- rep(NA,length(lambdas))
+len_lambda <- length(lambdas)
+# Performing Boosting on train dataset with different Shrinkage parameters
+for (i in 1:len_lambda) {
+  
+boost.hitters<-gbm(train.df$Salary~.,data = train.df, distribution = "gaussian", 
+                  n.trees = 1000, interaction.depth = 4, 
+                  shrinkage = lambdas[i],verbose = F)
+
+train_pred <- predict(boost.hitters, newdata = train.df, n.trees = 1000)
+train_error[i] = mean((train_pred - train.df$Salary)^2)
+}
+min(train_error)
+plot(lambdas, train_error, xlab = "Shrinkage values", ylab = "Training MSE", main="MSE variation in training data set wrt changing Shrinkage Values")
+
+```
+
+7) **Explanation** : From the plot we infer that the minimum Mean Sqaure error is observed at approximately 0.01 lambda value for train data set.The corresponding MSE value is 0.0638
+
+
+## 8) Produce a plot with different shrinkage values on the x-axis and the corresponding test set MSE on the y-axis.
+```{r Question 8}
+
+set.seed(42)
+lambdas<- seq(0.002, 0.01, by=0.001)
+test_error <- rep(NA,length(lambdas))
+len_lambda <- length(lambdas)
+# Performing Boosting on test dataset with different Shrinkage parameters
+for (i in 1:len_lambda) {
+  
+boost.hitters<-gbm(test.df$Salary~.,data = test.df, distribution = "gaussian", 
+                  n.trees = 1000, interaction.depth = 4, 
+                  shrinkage = lambdas[i],verbose = F)
+
+test_pred <- predict(boost.hitters, newdata = test.df, n.trees = 1000)
+test_error[i] = mean((test_pred - test.df$Salary)^2)
+}
+min(test_error)
+
+plot(lambdas, test_error, xlab = "Shrinkage values", ylab = "Test MSE", main="MSE variation in test data set wrt changing Shrinkage Values")
+
+
+```
+
+8) **Explanation**: From the plot we infer that the minimum Mean Sqaure error is observed at approximately 0.010 lambda value for test data set. The corresponding MSE value is 0.14
+
+
+## 9) Which variables appear to be the most important predictors in the boosted model?
+```{r Question 9}
+
+lambdas<- seq(0.002, 0.01, by=0.001)
+train_error <- rep(NA,length(lambdas))
+len_lambda <- length(lambdas)
+# Performing boosting model to predict the important predictors
+for (i in 1:len_lambda) {
+  
+boost.hitters<-gbm(train.df$Salary~.,data = train.df, distribution = "gaussian", 
+                  n.trees = 1000, interaction.depth = 4, 
+                  shrinkage = lambdas[i],verbose = F)
+
+train_pred <- predict(boost.hitters, newdata = train.df, n.trees = 1000)
+train_error[i] = mean((train_pred - train.df$Salary)^2)
+}
+summary(boost.hitters)
+
+
+```
+
+9) **Explanation**: We can infer that CAtBat, CRBI and CHits are the most important variables and removing these would introduce impurity/error in the dataset. 
+1st important variable - CAtBat, 
+2nd important variable - CRBI, 
+3rd important variable - CHits.
+
+
+## 10) Now apply bagging to the training set. What is the test set MSE for this approach?
+```{r Question 10}
+
+set.seed(42)
+
+bag_hitters<-randomForest(Salary~., data = train.df,  
+                          mtry = 19, ntree= 1000, importance= TRUE)
+bag_hitters
+yhat.rf <- predict(bag_hitters, newdata = test.df)
+mean((test.df$Salary - yhat.rf)^2)
+
+```
+
+10) **Explanation**: After applying bagging with 1000 tress we can explain 77.9% of the variation in our dataset by our model.The MSE value for bagging is 0.25
